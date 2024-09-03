@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
 
 class DatasetMean(Dataset):
-    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=128, max_len_code=230, limit_len=0, feature=None):
+    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=512, max_len_code=512, limit_len=0, feature=None):
         self.df = df
         self.text_tokenizer = text_tokenizer
         self.code_tokenizer = code_tokenizer
@@ -66,7 +66,7 @@ def tokenize_vec(tokenizer, samples, max_len, limit_len):
 
     
 class DatasetCodeQuestion(Dataset):
-    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=128, max_len_code=230, limit_len=0, feature=None):
+    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=512, max_len_code=512, limit_len=0, feature=None):
         self.df = df
         self.text_tokenizer = text_tokenizer
         self.code_tokenizer = code_tokenizer
@@ -98,8 +98,8 @@ class DatasetCodeQuestion(Dataset):
         }
     
 class DatasetCodeQPrevQ(DatasetCodeQuestion):
-    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=128, max_len_code=230, limit_len=0, feature=None):
-        super().__init__(df, text_tokenizer, code_tokenizer, max_len_text=128, max_len_code=230, limit_len=0, feature=None)
+    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=512, max_len_code=512, limit_len=0, feature=None):
+        super().__init__(df, text_tokenizer, code_tokenizer, max_len_text=512, max_len_code=512, limit_len=0, feature=None)
 
     def __len__(self):
         return len(self.df)
@@ -125,8 +125,8 @@ class DatasetCodeQPrevQ(DatasetCodeQuestion):
         return dict
 
 class FeatureDataset(DatasetCodeQPrevQ):
-    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=128, max_len_code=230, limit_len=0, feature=None):
-        super().__init__(df, text_tokenizer, code_tokenizer, max_len_text=128, max_len_code=230, limit_len=0)
+    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=512, max_len_code=512, limit_len=0, feature=None):
+        super().__init__(df, text_tokenizer, code_tokenizer, max_len_text=512, max_len_code=512, limit_len=0)
         self.feature_columns = feature
 
     def __len__(self):
@@ -167,6 +167,31 @@ def oversampling_boosting(df, ratio=None):
         
     additional_df = pd.DataFrame(new_rows)
     combined_df = pd.concat([df, additional_df], ignore_index=True)
+    print(combined_df["struggling"].value_counts(), flush=True)
+    return combined_df
+
+def oversampling_augmentation(df, ratio=None):
+    def _create_new_row(row, cut_inx):
+        new_row = row.copy()
+        new_row['prev_code'] = new_row['prev_code'][-cut_inx:]
+        new_row['prev_question'] = new_row['prev_question'][-cut_inx:]
+        new_row['score'] = new_row['score'][-cut_inx:]
+        return new_row
+
+    new_rows = []
+    for index, row in df.iterrows():
+        num_question = len(row['prev_code'])
+        num_additional_rows = 7 if row['struggling'] == 1 else 1
+        if len(row['prev_code']) < num_additional_rows:
+            for i in range(1, num_question):
+                new_rows.append(_create_new_row(row, i))            
+        else:
+            if num_additional_rows != 0:
+                for i in range(num_question // (num_additional_rows + 1) + 1 , num_question, num_question // (num_additional_rows + 1) + 1):
+                    new_rows.append(_create_new_row(row, i))
+                
+    additional_df = pd.DataFrame(new_rows)
+    combined_df = pd.concat([df, additional_df], ignore_index=True)
     return combined_df
 
 def undersampling_df(df, ratio=4):
@@ -179,14 +204,14 @@ def oversampling_df(df, ratio=4):
     struggling_df = df[df['struggling'] == 1]
     not_struggling_df = df[df['struggling'] == 0]  
     max_len = len(not_struggling_df)
-    df_1_upsampled = resample(struggling_df,random_state=42,n_samples=max_len//ratio,replace=True)
-    #concatenate the upsampled dataframe
-    return pd.concat([df_1_upsampled,not_struggling_df])
+    struggling_upsampled = resample(struggling_df,random_state=42,n_samples=max_len//ratio,replace=True)
+    not_struggling_upsampled = resample(not_struggling_df,random_state=42,n_samples=max_len,replace=True)
+    return pd.concat([struggling_upsampled,not_struggling_upsampled])
 
 def create_data_loader(df, dataset, text_tokenizer=None, code_tokenizer=None, batch_size=8, balanced_def=undersampling_df, ratio=4,
-                       ids_filepath_prefix='/home/nogaschw/Codeworkout/Thesis/Data/split_ids', limit=0, feature=None):        
+                       ids_filepath_prefix='/home/nogaschw/Codeworkout/Thesis/Data/split_ids', limit=0, feature=None, create_split=False):        
     # Split the data to train and test by student ID
-    if os.path.exists(f'{ids_filepath_prefix}_train_ids.pkl'):
+    if not create_split:
         print("Load exist spliting")
         train_ids, valid_ids, test_ids = load_ids(ids_filepath_prefix)
     else:
@@ -200,7 +225,7 @@ def create_data_loader(df, dataset, text_tokenizer=None, code_tokenizer=None, ba
     test_df = df[df['student_id'].isin(test_ids)]
 
     # Balance training set
-    train_df_balance = balanced_def(df, ratio)
+    train_df_balance = balanced_def(train_df, ratio)
 
     # Tokenize
     train_dataset = dataset(train_df_balance, text_tokenizer, code_tokenizer, feature=feature)

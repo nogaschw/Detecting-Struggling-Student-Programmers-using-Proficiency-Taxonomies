@@ -1,3 +1,4 @@
+import os
 import copy
 import torch
 import pickle
@@ -31,7 +32,7 @@ def training_loop(model, train_dataloader, test_dataloader, optimizer, criterion
     best_model_weights = None
     patience = 5
     checkpoint_dir = "/home/nogaschw/Codeworkout/Thesis/Models"
-    checkpoint_path = f"{checkpoint_dir}/{name}.pth"
+    checkpoint_path =  os.path.join(checkpoint_dir, f"{name}.pth")
 
     print(datetime.datetime.now().strftime('%d/%m/%Y_%H:%M:%S'), flush=True)
     print(len(train_dataloader), len(test_dataloader))
@@ -78,59 +79,29 @@ def training_loop(model, train_dataloader, test_dataloader, optimizer, criterion
         # Early stopping
         if avg_loss_valid < best_loss:
             best_loss = avg_loss_valid            
-            torch.save(model.state_dict(), checkpoint_path)
             best_model_weights = copy.deepcopy(model.state_dict())  # Deep copy here      
+            print("success deep copy")
             patience = 5  # Reset patience counter
+            torch.save(best_model_weights, checkpoint_path)
+            print("success save in", checkpoint_path)
         else:
             patience -= 1
             if patience == 0:
                 break
         if current_lr < 0.0000001:
             break
-        
+
+    torch.save(best_model_weights, checkpoint_path)
     print(datetime.datetime.now().strftime('%d/%m/%Y_%H:%M:%S'), flush=True)
 
-
-def results(df, model_name, y_prob, y_true):
+def results(df, model_name, threshold, y_true, y_prob):
     y_prob = np.array(y_prob)
     y_true = np.array(y_true)
-    y_pred = np.round(y_prob)
+    y_pred = np.where(y_prob > threshold, 1, 0)
     roc_auc = roc_auc_score(y_true, y_prob)
     accuracy = accuracy_score(y_true, y_pred)
     precision = precision_score(y_true, y_pred)
     recall = recall_score(y_true, y_pred)
     f1 = f1_score(y_true, y_pred)
-    df = pd.concat([pd.DataFrame([[model_name, roc_auc, accuracy, precision, recall, f1]], columns=df.columns), df], ignore_index=True)
-    return df
-        
-
-
-def create_code_output(code_model, train_dataloader , valid_dataloader, test_dataloader, device):
-    rows = {}
-    def _to_each_data(dataloader):
-        for i, batch in tqdm(enumerate(dataloader)):
-            if i % 1000 == 0:
-                print(f"Batch {i} from {len(dataloader)}")
-            batch_size, num_code, max_code_len = batch['code_input_ids'].size()
-            
-            code_input_ids = batch['code_input_ids'].view(batch_size * num_code, max_code_len)
-            code_attention_mask = batch['code_attention_mask'].view(batch_size * num_code, max_code_len)
-            
-            with torch.no_grad():
-                # Pass data through the model
-                code_output = code_model(code_input_ids.to(device), code_attention_mask.to(device)).last_hidden_state[:, 0, :]
-
-            # Collect rows
-            for j in range(batch_size * num_code):
-                rows[tuple(code_input_ids[j].tolist())] = code_output[j].tolist()
-    _to_each_data(train_dataloader)
-    print(f"Finish train- dict size {len(rows)}")
-    _to_each_data(valid_dataloader)
-    print(f"Finish valid- dict size {len(rows)}")
-    _to_each_data(test_dataloader)
-    print(f"Finish test- dict size {len(rows)}")
-    # Save the dictionary to a file
-    with open('Data/code_to_output_dict.pkl', 'wb') as file:
-        pickle.dump(rows, file)
-
-    
+    df = pd.concat([pd.DataFrame([[model_name, threshold, roc_auc, accuracy, precision, recall, f1]], columns=df.columns), df], ignore_index=True)
+    return df 

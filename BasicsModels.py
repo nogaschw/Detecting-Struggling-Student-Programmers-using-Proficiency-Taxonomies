@@ -7,10 +7,10 @@ from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoModelForSequenceClassification, AutoModel, BitsAndBytesConfig
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-with open('/home/nogaschw/Codeworkout/Thesis/Data/code_to_output_dict.pkl', 'rb') as file:
+with open('/home/nogaschw/Codeworkout/Thesis/Data/merged_dict.pkl', 'rb') as file:
     code_output_dict = pickle.load(file)
 
-def get_code_output(code_model, num_code, code_input_ids, code_attention_mask, mean=False):
+def get_code_output(code_model, num_code, code_input_ids, code_attention_mask):
     global code_output_dict
     global device
     snapshots = []
@@ -25,8 +25,6 @@ def get_code_output(code_model, num_code, code_input_ids, code_attention_mask, m
                 code_output_dict[tuple(code_input_ids[j].tolist())] = code_output[j].tolist()
             snapshot = code_output_dict[tuple(code_input_ids[i].tolist())]
         snapshots.append(snapshot)
-    if mean:
-        snapshot = np.mean(snapshots, axis=0)
     return torch.tensor(snapshots).to(device)
 
 
@@ -159,7 +157,7 @@ class CodeQPrevQLSTMModel(nn.Module):
 
         # Pass through Code Model and Text Model
         with torch.no_grad():
-            code_output = get_code_output(self.code_model, num_code, code_input_ids, code_attention_mask, self.mean)
+            code_output = get_code_output(self.code_model, num_code, code_input_ids, code_attention_mask)
             text_output= self.text_model(text_input_ids, text_attention_mask).last_hidden_state[:, 0, :] 
             questions_outputs = self.text_model(questions_input_ids, questions_attention_mask).last_hidden_state[:, 0, :]
 
@@ -167,14 +165,21 @@ class CodeQPrevQLSTMModel(nn.Module):
         code_per_question_tensors = torch.split(code_output, num_snapshots, dim=0)
         questions = torch.split(questions_outputs, num_question_tuple, dim=0)
         final_sequence = []
+
         # Concatenate the tensor between the splits
         for i, t in enumerate(code_per_question_tensors):
             final_sequence.append(questions[i])
-            final_sequence.append(t)
+            codes = t
+            if self.mean:
+                codes = t.mean(dim=0).unsqueeze(0)
+            final_sequence.append(codes)
         
         final_sequence = torch.cat(final_sequence, dim=0)
         sequence_output = torch.cat((final_sequence, text_output), dim=0)
-        sequence_output = sequence_output.view(batch_size, num_code + num_question + 1, -1)
+        if self.mean:
+            sequence_output = sequence_output.view(batch_size, 2 * num_question + 1, -1)
+        else:
+            sequence_output = sequence_output.view(batch_size, num_code + num_question + 1, -1)
 
         # Pass through LSTM
         lstm_output, _ = self.lstm(sequence_output)
