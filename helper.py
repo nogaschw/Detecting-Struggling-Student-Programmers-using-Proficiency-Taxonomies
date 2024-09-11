@@ -1,11 +1,11 @@
 import os
 import copy
+import wandb
 import torch
 import pickle
 import datetime
 import numpy as np
 import pandas as pd
-from tqdm.auto import tqdm
 from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, recall_score, f1_score
 
 def eval_loop(model, test_dataloader, device):
@@ -26,7 +26,7 @@ def eval_loop(model, test_dataloader, device):
     return all_labels, all_probs
 
 
-def training_loop(model, train_dataloader, test_dataloader, optimizer, criterion, device, lr_scheduler, name):
+def training_loop(model, train_dataloader, test_dataloader, optimizer, criterion, device, name):
     #Initialize Variables for EarlyStopping
     best_loss = float('inf')
     best_model_weights = None
@@ -43,7 +43,8 @@ def training_loop(model, train_dataloader, test_dataloader, optimizer, criterion
         total_loss = 0
 
         for i, batch in enumerate(train_dataloader):
-            if i % 1000 == 0:
+            optimizer.zero_grad()
+            if i % 100 == 0:
                 print(f"Batch {i} from {len(train_dataloader)}", flush=True)
             dict_batch = {k: v.to(device) for k, v in batch.items()}
             model_params = {k: v for k, v in dict_batch.items() if k != 'label'}
@@ -53,8 +54,6 @@ def training_loop(model, train_dataloader, test_dataloader, optimizer, criterion
         
             loss.backward()
             optimizer.step()
-            lr_scheduler.step()
-            optimizer.zero_grad()
             total_loss += loss.item()
 
         model.eval()
@@ -75,10 +74,10 @@ def training_loop(model, train_dataloader, test_dataloader, optimizer, criterion
 
         current_lr = optimizer.param_groups[0]['lr']
         print(f'Epoch [{epoch+1}], LR: {current_lr:.6f}, Loss: {avg_loss_train:.4f}, Val Loss: {avg_loss_valid:.4f}, patience: {patience}', flush=True)
-
+        wandb.log({"training loss": avg_loss_train, "avg_loss_valid loss": loss, "patience": patience})   
         # Early stopping
         if avg_loss_valid < best_loss:
-            best_loss = avg_loss_valid            
+            best_loss = avg_loss_valid 
             best_model_weights = copy.deepcopy(model.state_dict())  # Deep copy here      
             print("success deep copy")
             patience = 5  # Reset patience counter
@@ -90,7 +89,7 @@ def training_loop(model, train_dataloader, test_dataloader, optimizer, criterion
                 break
         if current_lr < 0.0000001:
             break
-
+         
     torch.save(best_model_weights, checkpoint_path)
     print(datetime.datetime.now().strftime('%d/%m/%Y_%H:%M:%S'), flush=True)
 

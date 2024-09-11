@@ -28,8 +28,8 @@ def process_in_batches(code_model, code_tokenizer, text_list, batch_size, device
             code_output = code_model(input_ids.to(device), attention_mask.to(device)).last_hidden_state[:, 0, :]
 
         # Collect rows
-        for j in range(len(batch_text)):
-            embedding_dict[tuple(input_ids[j].tolist())] = code_output[j].tolist()
+        for j, coding in enumerate(batch_text):
+            embedding_dict[coding] = code_output[j].tolist()
 
         # Clear memory
         del input_ids, attention_mask, code_output
@@ -40,12 +40,14 @@ def process_in_batches(code_model, code_tokenizer, text_list, batch_size, device
 
 
 
-# csv_file_path = '/home/nogaschw/Codeworkout/df_falcon.csv'
-# df = pd.read_csv(csv_file_path, sep=',')
+csv_file_path = '/home/nogaschw/Codeworkout/cleaned_code.csv'
+df = pd.read_csv(csv_file_path, sep=',')
 
-df = pd.read_csv('/home/nogaschw/Codeworkout/LinkTables/CodeStates.csv')
+all_code = set(df[df['course_id'] == 2]['clean_code'].tolist())
+# df = pd.read_csv('/home/nogaschw/Codeworkout/LinkTables/CodeStates.csv')
+# all_code = set(df['Code'].tolist())
 
-all_code = set(df['Code'].tolist())
+print(len(all_code))
 
 device_name = "cuda" if torch.cuda.is_available() else "cpu"
 device = torch.device(device_name)
@@ -57,10 +59,10 @@ if code_tokenizer.pad_token is None:
     code_tokenizer.pad_token = code_tokenizer.eos_token
 code_model = AutoModel.from_pretrained(code_model_name).to(device)
 
-print(f"run with {device}, {code_model}")
+print(f"run with {device}, {code_model_name}")
 
 rows =  process_in_batches(code_model, code_tokenizer, list(all_code), 32, device)
-file_path = "/home/nogaschw/Codeworkout/Thesis/Data/code_to_output_codeworkout.pkl"
+file_path = "/home/nogaschw/Codeworkout/Thesis/Data/text_to_model_output2.pkl"
 
 with open(file_path, 'wb') as f:
     pickle.dump(rows, f)
