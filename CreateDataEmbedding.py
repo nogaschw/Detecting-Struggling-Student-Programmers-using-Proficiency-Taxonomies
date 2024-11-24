@@ -1,10 +1,8 @@
 import gc
 import torch
-import numpy as np
 from Data import *
 import pandas as pd
 from helper import *
-from BasicsModels import *
 from transformers import AutoTokenizer, AutoModel
 
 def process_in_batches(code_model, code_tokenizer, text_list, batch_size, device):
@@ -29,6 +27,7 @@ def process_in_batches(code_model, code_tokenizer, text_list, batch_size, device
 
         # Collect rows
         for j, coding in enumerate(batch_text):
+            input_ids_str = input_ids[j].cpu().numpy().tobytes()  
             embedding_dict[coding] = code_output[j].tolist()
 
         # Clear memory
@@ -40,12 +39,11 @@ def process_in_batches(code_model, code_tokenizer, text_list, batch_size, device
 
 
 
-csv_file_path = '/home/nogaschw/Codeworkout/cleaned_code.csv'
-df = pd.read_csv(csv_file_path, sep=',')
-
-all_code = set(df[df['course_id'] == 2]['clean_code'].tolist())
-# df = pd.read_csv('/home/nogaschw/Codeworkout/LinkTables/CodeStates.csv')
-# all_code = set(df['Code'].tolist())
+# csv_file_path = '/home/nogaschw/Codeworkout/cleaned_code.csv'
+# df = pd.read_csv(csv_file_path, sep=',')
+# all_code = set(df[df['course_id'] == 4]['clean_code'].tolist())
+df = pd.read_csv('/home/nogaschw/Codeworkout/LinkTables/CodeStates.csv')
+all_code = set(df['Code'].tolist())
 
 print(len(all_code))
 
@@ -61,8 +59,8 @@ code_model = AutoModel.from_pretrained(code_model_name).to(device)
 
 print(f"run with {device}, {code_model_name}")
 
-rows =  process_in_batches(code_model, code_tokenizer, list(all_code), 32, device)
-file_path = "/home/nogaschw/Codeworkout/Thesis/Data/text_to_model_output2.pkl"
+rows =  process_in_batches(code_model, code_tokenizer, list(all_code), 64, device)
+file_path = "/home/nogaschw/Codeworkout/Thesis/Data/codeworkout_to_model_output.pkl"
 
 with open(file_path, 'wb') as f:
     pickle.dump(rows, f)

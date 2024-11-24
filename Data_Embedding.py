@@ -2,10 +2,19 @@ import torch
 import pickle
 from torch.utils.data import Dataset
 
-with open('/home/nogaschw/Codeworkout/Thesis/Data/merged_dict.pkl', 'rb') as file:
-    code_to_model_dict = pickle.load(file)
+base_path = '/home/nogaschw/Codeworkout/Thesis/Data/'
+code_to_model_dict = None
 
-class Dataset_Embedding(Dataset):
+def load(all):
+    global code_to_model_dict
+    print(all)
+    for i in all:
+        dict_list = []
+        with open(base_path + i + '.pkl', 'rb') as file:
+            dict_list.append(pickle.load(file))
+    code_to_model_dict = {k: v for d in dict_list for k, v in d.items()}
+
+class Dataset_Embedding_Q(Dataset):
     def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=512, max_len_code=768, limit_len=0, padding_size_code=2000, padding_size_q=200, feature=None):
         self.df = df
         self.text_tokenizer = text_tokenizer
@@ -23,54 +32,42 @@ class Dataset_Embedding(Dataset):
         row = self.df.iloc[idx]
         question = row['question']
         code_samples = row['prev_code']
-        prev_question = row['prev_question']
-        label = torch.tensor(row['struggling'], dtype=torch.float)
-    
-        limit_len = self.padding_size_q if self.limit_len == 0 else min(self.limit_len, self.padding_size_q)
-
-        if limit_len: # diffrent from 0
-            if len(code_samples) > limit_len:
-                code_samples = code_samples[-limit_len:]
-                prev_question = prev_question[-limit_len:]
+        prev_questions = row['prev_question']
+        label = torch.tensor(row['Label'], dtype=torch.float)
+        q_num = len(prev_questions)
         
         # Tokenize curr coding text
         text_inputs = self.text_tokenizer(question, max_length=self.max_len_text, padding='max_length', truncation=True, return_tensors='pt')
         
-        snapshots = []
-        len_snapshots = [0 for i in range(self.padding_size_q)]
-        for idx, codes in enumerate(code_samples):
-            len_snapshots[idx] = len(codes)
-            snapshots.extend(codes)
+        len_snapshots = [0 for i in range(q_num)]
+        prev_questions_input = torch.zeros((q_num, self.max_len_text), dtype=torch.float)
+        prev_questions_mask = torch.zeros((q_num, self.max_len_text), dtype=torch.float)
+        embedding = torch.zeros((self.padding_size_q, self.padding_size_code, self.max_len_code), dtype=torch.float)
 
-        # embedded for codes
-        embedding = torch.zeros((self.padding_size_code, self.max_len_code), dtype=torch.long)
-        for idx, code in enumerate(snapshots):
-            embedding[idx, :] = torch.tensor(code_to_model_dict[code])
+        for q_idx, codes in enumerate(code_samples):
+            len_snapshots[q_idx] = len(codes)
+            for c_idx, code in enumerate(codes):
+                embedding[q_idx, c_idx , :] = torch.tensor(code_to_model_dict[code])
         
-        # Tokenize per question
-        if len(prev_question) < self.padding_size_q:
-            pad_size = torch.zeros((self.padding_size_q - len(prev_question), self.max_len_text), dtype=torch.long)
-        else:
-            pad_size = torch.zeros((0, self.max_len_text), dtype=torch.long)
-        inputs = [self.text_tokenizer(sample, max_length=self.max_len_text, padding='max_length', truncation=True, return_tensors='pt') for sample in prev_question]
-        question_input_ids_stack = torch.cat([torch.stack([data['input_ids'] for data in inputs]).squeeze(1),pad_size], dim=0)
-        question_attention_mask_stack = torch.cat([torch.stack([data['attention_mask'] for data in inputs]).squeeze(1), pad_size], dim=0)
+        for i, q in enumerate(prev_questions):
+            q_inputs = self.text_tokenizer(q, max_length=self.max_len_text, padding='max_length', truncation=True, return_tensors='pt')
+            prev_questions_input[i, :] = q_inputs['input_ids'].squeeze(0)
+            prev_questions_mask[i, :] =  q_inputs['attention_mask'].squeeze(0)
 
         return {
             'text_input_ids': text_inputs['input_ids'].squeeze(0),
             'text_attention_mask': text_inputs['attention_mask'].squeeze(0),
             'code_embedding': embedding,
-            'code_num': len(snapshots),
-            'questions_input_ids': question_input_ids_stack.squeeze(0),
-            'questions_attention_mask': question_attention_mask_stack.squeeze(0),
-            'num_snapshots': torch.tensor(len_snapshots),
-            'que_num': len(prev_question),
+            'prev_q_input_ids': prev_questions_input.long(),
+            'prev_q_attention_mask': prev_questions_mask.long(),
+            'code_num': torch.tensor(len_snapshots),
+            'prev_struggling': torch.tensor(row['prev_label']),
             'label': label
         }
     
-class FeatureDataset_Embedding(Dataset_Embedding):
-    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=512, max_len_code=768, limit_len=0, padding_size_code=2000, padding_size_q=200 ,feature=None):
-        super().__init__(df, text_tokenizer, code_tokenizer, max_len_text=max_len_text, max_len_code=max_len_code, padding_size_code=padding_size_code, padding_size_q=padding_size_q, limit_len=limit_len)
+class FeatureDataset(Dataset_Embedding_Q):
+    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=512, max_len_code=768, limit_len=0, padding_size_code=2000, padding_size_q=200, feature=None):
+        super().__init__(df, text_tokenizer, code_tokenizer, max_len_text, max_len_code, limit_len, padding_size_code, padding_size_q)
         self.feature_columns = feature
 
     def __len__(self):
@@ -82,4 +79,15 @@ class FeatureDataset_Embedding(Dataset_Embedding):
 
         if self.feature_columns:
             dict['features'] = torch.tensor(row[self.feature_columns].values.tolist(), dtype=torch.float32)
+            
+        return dict
+    
+class LastFeatureDataset(Dataset_Embedding_Q):
+    def __init__(self, df, text_tokenizer, code_tokenizer, max_len_text=512, max_len_code=768, limit_len=0, padding_size_code=2000, padding_size_q=200, feature=None):
+        super().__init__(df, text_tokenizer, code_tokenizer, max_len_text, max_len_code, limit_len, padding_size_code, padding_size_q)
+
+    def __getitem__(self, idx):
+        dict = super().__getitem__(idx)
+        row = self.df.iloc[idx]
+        dict['prev_features'] = torch.tensor(row['prev_comp_cons'], dtype=torch.float32)     
         return dict
