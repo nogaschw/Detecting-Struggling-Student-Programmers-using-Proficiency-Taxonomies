@@ -1,5 +1,3 @@
-# Thesis
-
 This repository contains the code for my Master's thesis, including the code of the ECAI paper and the extended version used for the thesis and journal.
 
 ## Environment Setup
